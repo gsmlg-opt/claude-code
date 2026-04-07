@@ -30,11 +30,17 @@ const DEFAULT_BUILD_FEATURES = [
   'ULTRAPLAN',
 ]
 
-// Collect FEATURE_* env vars → Bun.build features
+// Collect FEATURE_* env vars
 const envFeatures = Object.keys(process.env)
   .filter(k => k.startsWith('FEATURE_'))
   .map(k => k.replace('FEATURE_', ''))
-const features = [...new Set([...DEFAULT_BUILD_FEATURES, ...envFeatures])]
+const enabledFeatures = new Set([...DEFAULT_BUILD_FEATURES, ...envFeatures])
+
+// Set feature env vars so src/shims/bun-bundle.ts can read them at bundle-eval time.
+// (These are also embedded into the bundle's process.env reads at runtime.)
+for (const f of enabledFeatures) {
+  process.env[`FEATURE_${f}`] = '1'
+}
 
 // Step 2: Bundle with splitting
 const result = await Bun.build({
@@ -43,7 +49,6 @@ const result = await Bun.build({
   target: 'bun',
   splitting: true,
   define: getMacroDefines(),
-  features,
 })
 
 if (!result.success) {

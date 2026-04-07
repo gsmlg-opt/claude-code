@@ -1,5 +1,5 @@
 // biome-ignore-all assist/source/organizeImports: ANT-ONLY import markers must not be reordered
-import { feature } from 'bun:bundle'
+import { feature } from 'src/shims/bun-bundle.js'
 import { type KeyboardEvent, Box, Text, useTheme, useThemeSetting, useTerminalFocus } from '@anthropic/ink'
 import * as React from 'react'
 import { useState, useCallback } from 'react'

@@ -1,4 +1,4 @@
-import { feature } from 'bun:bundle'
+import { feature } from 'src/shims/bun-bundle.js'
 import figures from 'figures'
 import React, { useEffect, useRef, useState } from 'react'
 import { useTerminalSize } from '../hooks/useTerminalSize.js'

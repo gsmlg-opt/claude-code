@@ -1,4 +1,4 @@
-import { feature } from 'bun:bundle'
+import { feature } from 'src/shims/bun-bundle.js'
 import type { TextBlockParam } from '@anthropic-ai/sdk/resources/index.mjs'
 import * as React from 'react'
 import { NO_CONTENT_MESSAGE } from '../../constants/messages.js'

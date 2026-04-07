@@ -1,4 +1,4 @@
-import { feature } from 'bun:bundle'
+import { feature } from 'src/shims/bun-bundle.js'
 import React, { useCallback, useEffect, useRef } from 'react'
 import { setMainLoopModelOverride } from '../bootstrap/state.js'
 import {

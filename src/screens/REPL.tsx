@@ -1,5 +1,5 @@
 // biome-ignore-all assist/source/organizeImports: ANT-ONLY import markers must not be reordered
-import { feature } from 'bun:bundle';
+import { feature } from 'src/shims/bun-bundle.js';
 import { spawnSync } from 'child_process';
 import {
   snapshotOutputTokensForTurn,

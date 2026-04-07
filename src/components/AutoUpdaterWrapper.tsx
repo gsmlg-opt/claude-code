@@ -1,4 +1,4 @@
-import { feature } from 'bun:bundle'
+import { feature } from 'src/shims/bun-bundle.js'
 import * as React from 'react'
 import type { AutoUpdaterResult } from '../utils/autoUpdater.js'
 import { isAutoUpdaterDisabled } from '../utils/config.js'

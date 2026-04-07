@@ -21,8 +21,8 @@ const defineArgs = Object.entries(defines).flatMap(([k, v]) => [
     `${k}:${v}`,
 ]);
 
-// Bun --feature flags: enable feature() gates at runtime.
-// Default features enabled in dev mode.
+// Feature flags: enable feature() gates at runtime via FEATURE_<NAME>=1 env vars.
+// The bun:bundle polyfill (--preload) reads these at call time.
 const DEFAULT_FEATURES = [
   "BUDDY", "TRANSCRIPT_CLASSIFIER", "BRIDGE_MODE",
   "AGENT_TRIGGERS_REMOTE", "CHICAGO_MCP", "VOICE_MODE",
@@ -37,14 +37,17 @@ const DEFAULT_FEATURES = [
   "KAIROS_BRIEF", "AWAY_SUMMARY", "ULTRAPLAN",
 ];
 
-// Any env var matching FEATURE_<NAME>=1 will also enable that feature.
-// e.g. FEATURE_PROACTIVE=1 bun run dev
-const envFeatures = Object.entries(process.env)
-    .filter(([k]) => k.startsWith("FEATURE_"))
-    .map(([k]) => k.replace("FEATURE_", ""));
-
-const allFeatures = [...new Set([...DEFAULT_FEATURES, ...envFeatures])];
-const featureArgs = allFeatures.flatMap((name) => ["--feature", name]);
+// Build feature env vars: merge defaults with any FEATURE_<NAME>=1 from env
+const featureEnv: Record<string, string> = {};
+for (const name of DEFAULT_FEATURES) {
+    featureEnv[`FEATURE_${name}`] = "1";
+}
+// Preserve any FEATURE_* vars already in environment
+for (const [k, v] of Object.entries(process.env)) {
+    if (k.startsWith("FEATURE_") && v) {
+        featureEnv[k] = v;
+    }
+}
 
 // If BUN_INSPECT is set, pass --inspect-wait to the child process
 const inspectArgs = process.env.BUN_INSPECT
@@ -52,8 +55,12 @@ const inspectArgs = process.env.BUN_INSPECT
     : [];
 
 const result = Bun.spawnSync(
-    ["bun", ...inspectArgs, "run", ...defineArgs, ...featureArgs, cliPath, ...process.argv.slice(2)],
-    { stdio: ["inherit", "inherit", "inherit"], cwd: projectRoot },
+    ["bun", ...inspectArgs, "run", ...defineArgs, cliPath, ...process.argv.slice(2)],
+    {
+        stdio: ["inherit", "inherit", "inherit"],
+        cwd: projectRoot,
+        env: { ...process.env, ...featureEnv },
+    },
 );
 
 process.exit(result.exitCode ?? 0);

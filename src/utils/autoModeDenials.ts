@@ -3,7 +3,7 @@
  * Populated from useCanUseTool.ts, read from RecentDenialsTab.tsx in /permissions.
  */
 
-import { feature } from 'bun:bundle'
+import { feature } from 'src/shims/bun-bundle.js'
 
 export type AutoModeDenial = {
   toolName: string

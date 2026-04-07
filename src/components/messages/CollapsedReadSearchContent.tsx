@@ -1,4 +1,4 @@
-import { feature } from 'bun:bundle'
+import { feature } from 'src/shims/bun-bundle.js'
 import { basename } from 'path'
 import React, { useRef } from 'react'
 import { useMinDisplayTime } from '../../hooks/useMinDisplayTime.js'

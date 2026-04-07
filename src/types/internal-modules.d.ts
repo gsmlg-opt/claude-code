@@ -5,11 +5,8 @@
  */
 
 // ============================================================================
-// bun:bundle — compile-time macros
+// bun:bundle — compile-time macros (replaced by src/shims/bun-bundle.ts)
 // ============================================================================
-declare module "bun:bundle" {
-    export function feature(name: string): boolean;
-}
 
 declare module "bun:ffi" {
     export function dlopen<T extends Record<string, { args: readonly string[]; returns: string }>>(path: string, symbols: T): { symbols: { [K in keyof T]: (...args: unknown[]) => unknown }; close(): void };

@@ -24,7 +24,7 @@ import {
 // eslint-disable-next-line custom-rules/no-top-level-side-effects
 startKeychainPrefetch()
 
-import { feature } from 'bun:bundle'
+import { feature } from 'src/shims/bun-bundle.js'
 import {
   Command as CommanderCommand,
   InvalidArgumentError,

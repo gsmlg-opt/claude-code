@@ -48,7 +48,7 @@ import {
 import { EmergencyTip } from './EmergencyTip.js'
 import { VoiceModeNotice } from './VoiceModeNotice.js'
 import { Opus1mMergeNotice } from './Opus1mMergeNotice.js'
-import { feature } from 'bun:bundle'
+import { feature } from 'src/shims/bun-bundle.js'
 
 // Conditional require so ChannelsNotice.tsx tree-shakes when both flags are
 // false. A module-scope helper component inside a feature() ternary does NOT

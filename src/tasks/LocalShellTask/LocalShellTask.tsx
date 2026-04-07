@@ -1,4 +1,4 @@
-import { feature } from 'bun:bundle'
+import { feature } from 'src/shims/bun-bundle.js'
 import { stat } from 'fs/promises'
 import {
   OUTPUT_FILE_TAG,

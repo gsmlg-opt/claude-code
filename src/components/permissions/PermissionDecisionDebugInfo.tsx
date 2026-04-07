@@ -1,4 +1,4 @@
-import { feature } from 'bun:bundle'
+import { feature } from 'src/shims/bun-bundle.js'
 import chalk from 'chalk'
 import figures from 'figures'
 import React, { useMemo } from 'react'

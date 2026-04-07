@@ -1,4 +1,4 @@
-import { feature } from 'bun:bundle'
+import { feature } from 'src/shims/bun-bundle.js'
 import { dirname } from 'path'
 import React from 'react'
 import { useTerminalSize } from 'src/hooks/useTerminalSize.js'

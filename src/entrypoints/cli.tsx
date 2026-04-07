@@ -1,5 +1,5 @@
 #!/usr/bin/env bun
-import { feature } from 'bun:bundle'
+import { feature } from 'src/shims/bun-bundle.js'
 
 // Runtime fallback for MACRO.* when not injected by build/dev defines.
 // This happens when running cli.tsx directly (not via `bun run dev` or built dist/).

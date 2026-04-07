@@ -1,4 +1,4 @@
-import { feature } from 'bun:bundle'
+import { feature } from 'src/shims/bun-bundle.js'
 import * as React from 'react'
 import { resetCostState } from '../../bootstrap/state.js'
 import {

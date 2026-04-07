@@ -1,4 +1,4 @@
-import { feature } from 'bun:bundle'
+import { feature } from 'src/shims/bun-bundle.js'
 import { APIUserAbortError } from '@anthropic-ai/sdk'
 import * as React from 'react'
 import { useCallback } from 'react'

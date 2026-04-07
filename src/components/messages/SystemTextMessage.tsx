@@ -1,7 +1,7 @@
 // biome-ignore-all assist/source/organizeImports: ANT-ONLY import markers must not be reordered
 import { Box, Link, Text, type TextProps } from '@anthropic/ink'
 import { FilePathLink } from '../FilePathLink.js'
-import { feature } from 'bun:bundle'
+import { feature } from 'src/shims/bun-bundle.js'
 import * as React from 'react'
 import { useState } from 'react'
 import sample from 'lodash-es/sample.js'

@@ -1,4 +1,4 @@
-import { feature } from 'bun:bundle'
+import { feature } from 'src/shims/bun-bundle.js'
 import { useEffect, useRef } from 'react'
 import { getTerminalFocusState, subscribeTerminalFocus } from '@anthropic/ink'
 import { getFeatureValue_CACHED_MAY_BE_STALE } from '../services/analytics/growthbook.js'

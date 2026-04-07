@@ -1,4 +1,4 @@
-import { feature } from 'bun:bundle'
+import { feature } from 'src/shims/bun-bundle.js'
 import type { ToolResultBlockParam } from '@anthropic-ai/sdk/resources/index.mjs'
 import * as React from 'react'
 import { BULLET_OPERATOR } from '../../../constants/figures.js'

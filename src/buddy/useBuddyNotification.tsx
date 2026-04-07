@@ -1,4 +1,4 @@
-import { feature } from 'bun:bundle'
+import { feature } from 'src/shims/bun-bundle.js'
 import React, { useEffect } from 'react'
 import { useNotifications } from '../context/notifications.js'
 import { Text } from '@anthropic/ink'

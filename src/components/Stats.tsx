@@ -1,4 +1,4 @@
-import { feature } from 'bun:bundle'
+import { feature } from 'src/shims/bun-bundle.js'
 import { plot as asciichart } from 'asciichart'
 import chalk from 'chalk'
 import figures from 'figures'

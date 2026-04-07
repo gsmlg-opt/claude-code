@@ -1,4 +1,4 @@
-import { feature } from 'bun:bundle'
+import { feature } from 'src/shims/bun-bundle.js'
 import * as React from 'react'
 import { useEffect, useState } from 'react'
 import { Box, Text } from '@anthropic/ink'

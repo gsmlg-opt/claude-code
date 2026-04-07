@@ -1,4 +1,4 @@
-import { feature } from 'bun:bundle'
+import { feature } from 'src/shims/bun-bundle.js'
 import chalk from 'chalk'
 import type { UUID } from 'crypto'
 import type { RefObject } from 'react'

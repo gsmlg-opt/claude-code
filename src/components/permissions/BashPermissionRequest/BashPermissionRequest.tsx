@@ -1,4 +1,4 @@
-import { feature } from 'bun:bundle'
+import { feature } from 'src/shims/bun-bundle.js'
 import figures from 'figures'
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Box, Text, useTheme } from '@anthropic/ink'
