@@ -51,8 +51,8 @@ bun run docs:dev
 ### Runtime & Build
 
 - **Runtime**: Bun (not Node.js). All imports, builds, and execution use Bun APIs.
-- **Build**: `build.ts` 执行 `Bun.build()` with `splitting: true`，入口 `src/entrypoints/cli.tsx`，输出 `dist/cli.js` + chunk files。默认启用 `AGENT_TRIGGERS_REMOTE`、`CHICAGO_MCP`、`VOICE_MODE` feature。构建后自动替换 `import.meta.require` 为 Node.js 兼容版本（产物 bun/node 都可运行）。
-- **Dev mode**: `scripts/dev.ts` 通过 Bun `-d` flag 注入 `MACRO.*` defines，运行 `src/entrypoints/cli.tsx`。默认启用 `BUDDY`、`TRANSCRIPT_CLASSIFIER`、`BRIDGE_MODE`、`AGENT_TRIGGERS_REMOTE`、`CHICAGO_MCP`、`VOICE_MODE` 六个 feature。
+- **Build**: `build.ts` 执行 `Bun.build()` with `splitting: true`，入口 `src/entrypoints/cli.tsx`，输出 `dist/cli.js` + chunk files。默认启用 `AGENT_TRIGGERS_REMOTE`、`CHICAGO_MCP`、`VOICE_MODE`、`SHOT_STATS`、`PROMPT_CACHE_BREAK_DETECTION`、`TOKEN_BUDGET`、`AGENT_TRIGGERS`、`ULTRATHINK`、`BUILTIN_EXPLORE_PLAN_AGENTS`、`LODESTONE`、`EXTRACT_MEMORIES`、`VERIFICATION_AGENT`、`KAIROS_BRIEF`、`AWAY_SUMMARY`、`ULTRAPLAN` feature。构建后自动替换 `import.meta.require` 为 Node.js 兼容版本（产物 bun/node 都可运行）。
+- **Dev mode**: `scripts/dev.ts` 通过 Bun `-d` flag 注入 `MACRO.*` defines，运行 `src/entrypoints/cli.tsx`。默认启用 build 全部 feature 加上 `BUDDY`、`TRANSCRIPT_CLASSIFIER`、`BRIDGE_MODE`。
 - **Module system**: ESM (`"type": "module"`), TSX with `react-jsx` transform.
 - **Monorepo**: Bun workspaces — internal packages live in `packages/` resolved via `workspace:*`.
 - **Lint/Format**: Biome (`biome.json`)。`bun run lint` / `bun run lint:fix` / `bun run format`。
@@ -89,7 +89,7 @@ bun run docs:dev
 
 - **`src/Tool.ts`** — Tool interface definition (`Tool` type) and utilities (`findToolByName`, `toolMatchesName`).
 - **`src/tools.ts`** — Tool registry. Assembles the tool list; some tools are conditionally loaded via `feature()` flags or `process.env.USER_TYPE`.
-- **`src/tools/<ToolName>/`** — 61 个 tool 目录（如 BashTool, FileEditTool, GrepTool, AgentTool, WebFetchTool, LSPTool, MCPTool 等）。每个 tool 包含 `name`、`description`、`inputSchema`、`call()` 及可选的 React 渲染组件。
+- **`src/tools/<ToolName>/`** — 59 个 tool 目录（如 BashTool, FileEditTool, GrepTool, AgentTool, WebFetchTool, LSPTool, MCPTool 等）。每个 tool 包含 `name`、`description`、`inputSchema`、`call()` 及可选的 React 渲染组件。
 - **`src/tools/shared/`** — Tool 共享工具函数。
 
 ### UI Layer (Ink)
@@ -132,8 +132,8 @@ Feature flags control which functionality is enabled at runtime:
 
 - **在代码中使用**: 统一通过 `import { feature } from 'bun:bundle'` 导入，调用 `feature('FLAG_NAME')` 返回 `boolean`。**不要**在 `cli.tsx` 或其他文件里自己定义 `feature` 函数或覆盖这个 import。
 - **启用方式**: 通过环境变量 `FEATURE_<FLAG_NAME>=1`。例如 `FEATURE_BUDDY=1 bun run dev` 启用 BUDDY 功能。
-- **Dev 默认 features**: `BUDDY`、`TRANSCRIPT_CLASSIFIER`、`BRIDGE_MODE`、`AGENT_TRIGGERS_REMOTE`、`CHICAGO_MCP`、`VOICE_MODE`（见 `scripts/dev.ts`）。
-- **Build 默认 features**: `AGENT_TRIGGERS_REMOTE`、`CHICAGO_MCP`、`VOICE_MODE`（见 `build.ts`）。
+- **Dev 默认 features**: Build 全部 feature + `BUDDY`、`TRANSCRIPT_CLASSIFIER`、`BRIDGE_MODE`（见 `scripts/dev.ts`）。
+- **Build 默认 features**: `AGENT_TRIGGERS_REMOTE`、`CHICAGO_MCP`、`VOICE_MODE`、`SHOT_STATS`、`PROMPT_CACHE_BREAK_DETECTION`、`TOKEN_BUDGET`、`AGENT_TRIGGERS`、`ULTRATHINK`、`BUILTIN_EXPLORE_PLAN_AGENTS`、`LODESTONE`、`EXTRACT_MEMORIES`、`VERIFICATION_AGENT`、`KAIROS_BRIEF`、`AWAY_SUMMARY`、`ULTRAPLAN`（见 `build.ts`）。
 - **常见 flag**: `BUDDY`, `DAEMON`, `BRIDGE_MODE`, `BG_SESSIONS`, `PROACTIVE`, `KAIROS`, `VOICE_MODE`, `FORK_SUBAGENT`, `SSH_REMOTE`, `DIRECT_CONNECT`, `TEMPLATES`, `CHICAGO_MCP`, `BYOC_ENVIRONMENT_RUNNER`, `SELF_HOSTED_RUNNER`, `COORDINATOR_MODE`, `UDS_INBOX`, `LODESTONE`, `ABLATION_BASELINE` 等。
 - **类型声明**: `src/types/internal-modules.d.ts` 中声明了 `bun:bundle` 模块的 `feature` 函数签名。
 
@@ -213,6 +213,23 @@ export GEMINI_DEFAULT_SONNET_MODEL="gemini-2.5-flash"
 export GEMINI_DEFAULT_OPUS_MODEL="gemini-2.5-pro"
 ```
 
+### Grok (xAI) 兼容层
+
+通过 `CLAUDE_CODE_USE_GROK=1` 环境变量启用，支持 xAI Grok API。
+
+- **`src/services/api/grok/`** — client、模型映射、类型定义
+- **`src/utils/model/providers.ts`** — 添加 `'grok'` provider 类型
+
+关键环境变量：
+- `CLAUDE_CODE_USE_GROK` - 启用 Grok provider
+- `GROK_API_KEY` - API 密钥（必填）
+- `GROK_BASE_URL` - API 端点（可选）
+- `GROK_MODEL` - 直接指定模型（最高优先级）
+- `GROK_DEFAULT_HAIKU_MODEL` / `GROK_DEFAULT_SONNET_MODEL` / `GROK_DEFAULT_OPUS_MODEL` - 按能力级别映射
+- `GROK_MODEL_MAP` - JSON 格式的全局模型映射（如 `{"opus":"grok-4","sonnet":"grok-3"}`)
+
+默认模型映射：opus → `grok-4.20-reasoning`，sonnet/haiku → `grok-3-mini-fast`。
+
 ### Key Type Files
 
 - **`src/types/global.d.ts`** — Declares `MACRO`, `BUILD_TARGET`, `BUILD_ENV` and internal Anthropic-only identifiers.
@@ -228,7 +245,7 @@ export GEMINI_DEFAULT_OPUS_MODEL="gemini-2.5-pro"
 - **共享 mock/fixture**: `tests/mocks/`（api-responses, file-system, fixtures/）
 - **命名**: `describe("functionName")` + `test("behavior description")`，英文
 - **Mock 模式**: 对重依赖模块使用 `mock.module()` + `await import()` 解锁（必须内联在测试文件中，不能从共享 helper 导入）
-- **当前状态**: ~1623 tests / 114 files (110 unit + 4 integration) / 0 fail（详见 `docs/testing-spec.md`）
+- **当前状态**: ~1623 tests / 84 files / 0 fail（详见 `docs/testing-spec.md`）
 
 ## Working with This Codebase
 
