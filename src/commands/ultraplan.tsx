@@ -1,4 +1,3 @@
-import { readFileSync } from 'fs';
 import { REMOTE_CONTROL_DISCONNECTED_MSG } from '../bridge/types.js';
 import type { Command } from '../commands.js';
 import { DIAMOND_OPEN } from '../constants/figures.js';
@@ -21,26 +20,36 @@ import { logForDebugging } from '../utils/debug.js';
 import { errorMessage } from '../utils/errors.js';
 import { logError } from '../utils/log.js';
 import { enqueuePendingNotification } from '../utils/messageQueueManager.js';
-import { ALL_MODEL_CONFIGS } from '../utils/model/configs.js';
 import { updateTaskState } from '../utils/task/framework.js';
 import { archiveRemoteSession, teleportToRemote } from '../utils/teleport.js';
 import { pollForApprovedExitPlanMode, UltraplanPollError } from '../utils/ultraplan/ccrSession.js';
+import {
+  getPromptText,
+  getDialogConfig,
+  getPromptIdentifier,
+  type PromptIdentifier,
+} from '../utils/ultraplan/prompt.js';
+import { registerCleanup } from '../utils/cleanupRegistry.js';
 
 // TODO(prod-hardening): OAuth token may go stale over the 30min poll;
 // consider refresh.
 
-// Multi-agent exploration is slow; 30min timeout.
-const ULTRAPLAN_TIMEOUT_MS = 30 * 60 * 1000;
-
 export const CCR_TERMS_URL = 'https://code.claude.com/docs/en/claude-code-on-the-web';
 
-// CCR runs against the first-party API — use the canonical ID, not the
-// provider-specific string getModelStrings() would return (which may be a
-// Bedrock ARN or Vertex ID on the local CLI). Read at call time, not module
-// load: the GrowthBook cache is empty at import and `/config` Gates can flip
-// it between invocations.
-function getUltraplanModel(): string {
-  return getFeatureValue_CACHED_MAY_BE_STALE('tengu_ultraplan_model', ALL_MODEL_CONFIGS.opus46.firstParty);
+export function getUltraplanTimeoutMs(): number {
+  return getFeatureValue_CACHED_MAY_BE_STALE('tengu_ultraplan_timeout_seconds', 1800) * 1000;
+}
+
+/**
+ * 是否启用 ultraplan, 默认启用
+ *
+ * @returns
+ */
+export function isUltraplanEnabled(): boolean {
+  return (
+    getFeatureValue_CACHED_MAY_BE_STALE<{ enabled: boolean } | null>('tengu_ultraplan_config', { enabled: true })
+      ?.enabled === true
+  );
 }
 
 // prompt.txt is wrapped in <system-reminder> so the CCR browser hides
@@ -57,28 +66,18 @@ const _rawPrompt = require('../utils/ultraplan/prompt.txt');
 /* eslint-enable @typescript-eslint/no-require-imports */
 const DEFAULT_INSTRUCTIONS: string = (typeof _rawPrompt === 'string' ? _rawPrompt : _rawPrompt.default).trimEnd();
 
-// Dev-only prompt override resolved eagerly at module load.
-// Gated to ant builds (USER_TYPE is a build-time define,
-// so the override path is DCE'd from external builds).
-// Shell-set env only, so top-level process.env read is fine
-// — settings.env never injects this.
-/* eslint-disable custom-rules/no-process-env-top-level, custom-rules/no-sync-fs -- ant-only dev override; eager top-level read is the point (crash at startup, not silently inside the slash-command try/catch) */
-const ULTRAPLAN_INSTRUCTIONS: string =
-  process.env.USER_TYPE === 'ant' && process.env.ULTRAPLAN_PROMPT_FILE
-    ? readFileSync(process.env.ULTRAPLAN_PROMPT_FILE, 'utf8').trimEnd()
-    : DEFAULT_INSTRUCTIONS;
-/* eslint-enable custom-rules/no-process-env-top-level, custom-rules/no-sync-fs */
-
 /**
  * Assemble the initial CCR user message. seedPlan and blurb stay outside the
  * system-reminder so the browser renders them; scaffolding is hidden.
  */
-export function buildUltraplanPrompt(blurb: string, seedPlan?: string): string {
+export function buildUltraplanPrompt(blurb: string, seedPlan?: string, promptId?: PromptIdentifier): string {
   const parts: string[] = [];
   if (seedPlan) {
     parts.push('Here is a draft plan to refine:', '', seedPlan, '');
   }
-  parts.push(ULTRAPLAN_INSTRUCTIONS);
+  // parts.push(ULTRAPLAN_INSTRUCTIONS)
+  parts.push(getPromptText(promptId!));
+
   if (blurb) {
     parts.push('', blurb);
   }
@@ -98,7 +97,7 @@ function startDetachedPoll(
     try {
       const { plan, rejectCount, executionTarget } = await pollForApprovedExitPlanMode(
         sessionId,
-        ULTRAPLAN_TIMEOUT_MS,
+        getUltraplanTimeoutMs(),
         phase => {
           if (phase === 'needs_input') logEvent('tengu_ultraplan_awaiting_input', {});
           updateTaskState<RemoteAgentTaskState>(taskId, setAppState, t => {
@@ -258,6 +257,7 @@ export async function stopUltraplan(
 export async function launchUltraplan(opts: {
   blurb: string;
   seedPlan?: string;
+  promptIdentifier?: PromptIdentifier;
   getAppState: () => AppState;
   setAppState: (f: (prev: AppState) => AppState) => void;
   signal: AbortSignal;
@@ -272,7 +272,8 @@ export async function launchUltraplan(opts: {
    */
   onSessionReady?: (msg: string) => void;
 }): Promise<string> {
-  const { blurb, seedPlan, getAppState, setAppState, signal, disconnectedBridge, onSessionReady } = opts;
+  const { blurb, seedPlan, promptIdentifier, getAppState, setAppState, signal, disconnectedBridge, onSessionReady } =
+    opts;
 
   const { ultraplanSessionUrl: active, ultraplanLaunching } = getAppState();
   if (active || ultraplanLaunching) {
@@ -292,11 +293,12 @@ export async function launchUltraplan(opts: {
       'Usage: /ultraplan \\<prompt\\>, or include "ultraplan" anywhere',
       'in your prompt',
       '',
-      'Advanced multi-agent plan mode with our most powerful model',
-      '(Opus). Runs in Claude Code on the web. When the plan is ready,',
-      'you can execute it in the web session or send it back here.',
-      'Terminal stays free while the remote plans.',
-      'Requires /login.',
+      // 'Advanced multi-agent plan mode with our most powerful model',
+      // '(Opus). Runs in Claude Code on the web. When the plan is ready,',
+      // 'you can execute it in the web session or send it back here.',
+      // 'Terminal stays free while the remote plans.',
+      // 'Requires /login.',
+      ...getDialogConfig().usageBlurb,
       '',
       `Terms: ${CCR_TERMS_URL}`,
     ].join('\n');
@@ -308,6 +310,7 @@ export async function launchUltraplan(opts: {
   void launchDetached({
     blurb,
     seedPlan,
+    promptIdentifier,
     getAppState,
     setAppState,
     signal,
@@ -319,17 +322,26 @@ export async function launchUltraplan(opts: {
 async function launchDetached(opts: {
   blurb: string;
   seedPlan?: string;
+  promptIdentifier?: PromptIdentifier;
   getAppState: () => AppState;
   setAppState: (f: (prev: AppState) => AppState) => void;
   signal: AbortSignal;
   onSessionReady?: (msg: string) => void;
 }): Promise<void> {
-  const { blurb, seedPlan, getAppState, setAppState, signal, onSessionReady } = opts;
+  const {
+    blurb,
+    seedPlan,
+    promptIdentifier = getPromptIdentifier(),
+    getAppState,
+    setAppState,
+    signal,
+    onSessionReady,
+  } = opts;
   // Hoisted so the catch block can archive the remote session if an error
   // occurs after teleportToRemote succeeds (avoids 30min orphan).
   let sessionId: string | undefined;
   try {
-    const model = getUltraplanModel();
+    // const model = getUltraplanModel()
 
     const eligibility = await checkRemoteAgentEligibility();
     if (!eligibility.eligible) {
@@ -347,12 +359,13 @@ async function launchDetached(opts: {
       return;
     }
 
-    const prompt = buildUltraplanPrompt(blurb, seedPlan);
+    const prompt = buildUltraplanPrompt(blurb, seedPlan, promptIdentifier);
     let bundleFailMsg: string | undefined;
+    let createFailMsg: string | undefined;
     const session = await teleportToRemote({
       initialMessage: prompt,
       description: blurb || 'Refine local plan',
-      model,
+      // model,
       permissionMode: 'plan',
       ultraplan: true,
       signal,
@@ -360,15 +373,21 @@ async function launchDetached(opts: {
       onBundleFail: msg => {
         bundleFailMsg = msg;
       },
+      onCreateFail: msg => {
+        createFailMsg = msg;
+      },
     });
     if (!session) {
+      let failMsg = bundleFailMsg ?? createFailMsg;
       logEvent('tengu_ultraplan_create_failed', {
         reason: (bundleFailMsg
           ? 'bundle_fail'
-          : 'teleport_null') as AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS,
+          : createFailMsg
+            ? 'create_api_fail'
+            : 'teleport_null') as AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS,
       });
       enqueuePendingNotification({
-        value: `ultraplan: session creation failed${bundleFailMsg ? ` — ${bundleFailMsg}` : ''}. See --debug for details.`,
+        value: `ultraplan: session creation failed${failMsg ? ` — ${failMsg}` : ''}. See --debug for details.`,
         mode: 'task-notification',
       });
       return;
@@ -384,7 +403,8 @@ async function launchDetached(opts: {
     onSessionReady?.(buildSessionReadyMessage(url));
     logEvent('tengu_ultraplan_launched', {
       has_seed_plan: Boolean(seedPlan),
-      model: model as AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS,
+      prompt_identifier: promptIdentifier as AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS,
+      // model: model as AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS,
     });
     // TODO(#23985): replace registerRemoteAgentTask + startDetachedPoll with
     // ExitPlanModeScanner inside startRemoteSessionPolling.
@@ -400,6 +420,11 @@ async function launchDetached(opts: {
       isUltraplan: true,
     });
     startDetachedPoll(taskId, session.id, url, getAppState, setAppState);
+    registerCleanup(async () => {
+      if (getAppState().ultraplanSessionUrl === url) {
+        await archiveRemoteSession(session.id, 1500);
+      }
+    });
   } catch (e) {
     logError(e);
     logEvent('tengu_ultraplan_create_failed', {
@@ -409,6 +434,13 @@ async function launchDetached(opts: {
       value: `ultraplan: unexpected error — ${errorMessage(e)}`,
       mode: 'task-notification',
     });
+
+    enqueuePendingNotification({
+      value: `Ultraplan hit an unexpected error during launch. Wait for the user's next instructions.`,
+      mode: 'task-notification',
+      isMeta: true,
+    });
+
     if (sessionId) {
       // Error after teleport succeeded — archive so the remote doesn't sit
       // running for 30min with nobody polling it.
@@ -469,6 +501,7 @@ export default {
   name: 'ultraplan',
   description: `~10–30 min · Claude Code on the web drafts an advanced plan you can edit and approve. See ${CCR_TERMS_URL}`,
   argumentHint: '<prompt>',
-  isEnabled: () => true,
+  // isEnabled: () => process.env.USER_TYPE === 'ant',
+  isEnabled: () => isUltraplanEnabled(),
   load: () => Promise.resolve({ call }),
 } satisfies Command;

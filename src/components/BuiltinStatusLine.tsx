@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { formatCost } from '../cost-tracker.js';
-import { Box, Text, ProgressBar } from '@anthropic/ink';
+import { Box, Text } from '@anthropic/ink';
 import { formatTokens } from '../utils/format.js';
 import { useTerminalSize } from '../hooks/useTerminalSize.js';
 
@@ -55,7 +55,7 @@ function BuiltinStatusLineInner({
   // Force re-render every 60s so countdowns stay current
   const [tick, setTick] = useState(0);
   useEffect(() => {
-    const hasResetTime = rateLimits.five_hour?.resets_at || rateLimits.seven_day?.resets_at;
+    const hasResetTime = (rateLimits.five_hour?.resets_at ?? 0) || (rateLimits.seven_day?.resets_at ?? 0);
     if (!hasResetTime) return;
     const id = setInterval(() => setTick(t => t + 1), 60_000);
     return () => clearInterval(id);
@@ -68,7 +68,6 @@ function BuiltinStatusLineInner({
   const modelParts = modelName.split(' ');
   const shortModel = modelParts.length >= 2 ? `${modelParts[0]} ${modelParts[1]}` : modelName;
 
-  const wide = columns >= 100;
   const narrow = columns < 60;
 
   const hasFiveHour = rateLimits.five_hour != null;
@@ -81,7 +80,7 @@ function BuiltinStatusLineInner({
   const tokenDisplay = `${formatTokens(usedTokens)}/${formatTokens(contextWindowSize)}`;
 
   return (
-    <Box wrap="truncate">
+    <Box>
       {/* Model name */}
       <Text>{shortModel}</Text>
 
@@ -96,17 +95,6 @@ function BuiltinStatusLineInner({
         <>
           <Separator />
           <Text dimColor>Session </Text>
-          {wide && (
-            <>
-              <ProgressBar
-                ratio={rateLimits.five_hour!.utilization}
-                width={10}
-                fillColor="rate_limit_fill"
-                emptyColor="rate_limit_empty"
-              />
-              <Text> </Text>
-            </>
-          )}
           <Text>{fiveHourPct}%</Text>
           {!narrow && rateLimits.five_hour!.resets_at > 0 && (
             <Text dimColor> {formatCountdown(rateLimits.five_hour!.resets_at)}</Text>
@@ -119,17 +107,6 @@ function BuiltinStatusLineInner({
         <>
           <Separator />
           <Text dimColor>Weekly </Text>
-          {wide && (
-            <>
-              <ProgressBar
-                ratio={rateLimits.seven_day!.utilization}
-                width={10}
-                fillColor="rate_limit_fill"
-                emptyColor="rate_limit_empty"
-              />
-              <Text> </Text>
-            </>
-          )}
           <Text>{sevenDayPct}%</Text>
           {!narrow && rateLimits.seven_day!.resets_at > 0 && (
             <Text dimColor> {formatCountdown(rateLimits.seven_day!.resets_at)}</Text>

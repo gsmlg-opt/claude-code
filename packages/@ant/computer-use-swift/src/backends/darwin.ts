@@ -9,9 +9,28 @@ import { readFileSync, unlinkSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
 import type {
-  AppInfo, AppsAPI, DisplayAPI, DisplayGeometry, InstalledApp,
-  PrepareDisplayResult, RunningApp, ScreenshotAPI, ScreenshotResult,
-  SwiftBackend, WindowDisplayInfo,
+  AppInfo,
+  AppsAPI,
+  DisplayAPI,
+  DisplayGeometry,
+  InstalledApp,
+  PrepareDisplayResult,
+  RunningApp,
+  ScreenshotAPI,
+  ScreenshotResult,
+  SwiftBackend,
+  WindowDisplayInfo,
+} from '../types.js'
+
+export type {
+  DisplayGeometry,
+  PrepareDisplayResult,
+  AppInfo,
+  InstalledApp,
+  RunningApp,
+  ScreenshotResult,
+  ResolvePrepareCaptureResult,
+  WindowDisplayInfo,
 } from '../types.js'
 
 // ---------------------------------------------------------------------------
@@ -21,7 +40,8 @@ import type {
 function jxaSync(script: string): string {
   const result = Bun.spawnSync({
     cmd: ['osascript', '-l', 'JavaScript', '-e', script],
-    stdout: 'pipe', stderr: 'pipe',
+    stdout: 'pipe',
+    stderr: 'pipe',
   })
   return new TextDecoder().decode(result.stdout).trim()
 }
@@ -29,14 +49,16 @@ function jxaSync(script: string): string {
 function osascriptSync(script: string): string {
   const result = Bun.spawnSync({
     cmd: ['osascript', '-e', script],
-    stdout: 'pipe', stderr: 'pipe',
+    stdout: 'pipe',
+    stderr: 'pipe',
   })
   return new TextDecoder().decode(result.stdout).trim()
 }
 
 async function osascript(script: string): Promise<string> {
   const proc = Bun.spawn(['osascript', '-e', script], {
-    stdout: 'pipe', stderr: 'pipe',
+    stdout: 'pipe',
+    stderr: 'pipe',
   })
   const text = await new Response(proc.stdout).text()
   await proc.exited
@@ -45,7 +67,8 @@ async function osascript(script: string): Promise<string> {
 
 async function jxa(script: string): Promise<string> {
   const proc = Bun.spawn(['osascript', '-l', 'JavaScript', '-e', script], {
-    stdout: 'pipe', stderr: 'pipe',
+    stdout: 'pipe',
+    stderr: 'pipe',
   })
   const text = await new Response(proc.stdout).text()
   await proc.exited
@@ -90,8 +113,10 @@ export const display: DisplayAPI = {
         JSON.stringify(result);
       `)
       return (JSON.parse(raw) as DisplayGeometry[]).map(d => ({
-        width: Number(d.width), height: Number(d.height),
-        scaleFactor: Number(d.scaleFactor), displayId: Number(d.displayId),
+        width: Number(d.width),
+        height: Number(d.height),
+        scaleFactor: Number(d.scaleFactor),
+        displayId: Number(d.displayId),
       }))
     } catch {
       try {
@@ -115,8 +140,10 @@ export const display: DisplayAPI = {
           JSON.stringify(result);
         `)
         return (JSON.parse(raw) as DisplayGeometry[]).map(d => ({
-          width: Number(d.width), height: Number(d.height),
-          scaleFactor: Number(d.scaleFactor), displayId: Number(d.displayId),
+          width: Number(d.width),
+          height: Number(d.height),
+          scaleFactor: Number(d.scaleFactor),
+          displayId: Number(d.displayId),
         }))
       } catch {
         return [{ width: 1920, height: 1080, scaleFactor: 2, displayId: 1 }]
@@ -159,25 +186,39 @@ export const apps: AppsAPI = {
 
   async listInstalled() {
     try {
-      const result = await osascript(`
-        tell application "System Events"
-          set appList to ""
-          repeat with appFile in (every file of folder "Applications" of startup disk whose name ends with ".app")
-            set appPath to POSIX path of (appFile as alias)
-            set appName to name of appFile
-            set appList to appList & appPath & "|" & appName & "\\n"
-          end repeat
-          return appList
-        end tell
-      `)
-      return result.split('\n').filter(Boolean).map(line => {
-        const [path, name] = line.split('|', 2)
-        const displayName = (name ?? '').replace(/\.app$/, '')
-        return {
-          bundleId: `com.app.${displayName.toLowerCase().replace(/\s+/g, '-')}`,
-          displayName,
-          path: path ?? '',
+      // Use mdls to enumerate apps and get real bundle identifiers.
+      // The previous AppleScript approach generated fake bundle IDs
+      // (com.app.display-name) which prevented request_access from matching
+      // apps by their real bundle ID (e.g. com.google.Chrome).
+      const dirs = ['/Applications', '~/Applications', '/System/Applications']
+      const allApps: InstalledApp[] = []
+      for (const dir of dirs) {
+        const expanded = dir.startsWith('~')
+          ? join(process.env.HOME ?? '~', dir.slice(1))
+          : dir
+        const proc = Bun.spawn(
+          [
+            'bash',
+            '-c',
+            `for f in "${expanded}"/*.app; do [ -d "$f" ] || continue; bid=$(mdls -name kMDItemCFBundleIdentifier "$f" 2>/dev/null | sed 's/.*= "//;s/"//'); name=$(basename "$f" .app); echo "$f|$name|$bid"; done`,
+          ],
+          { stdout: 'pipe', stderr: 'pipe' },
+        )
+        const text = await new Response(proc.stdout).text()
+        await proc.exited
+        for (const line of text.split('\n').filter(Boolean)) {
+          const [path, displayName, bundleId] = line.split('|', 3)
+          if (path && displayName && bundleId && bundleId !== '(null)') {
+            allApps.push({ bundleId, displayName, path })
+          }
         }
+      }
+      // Deduplicate by bundleId (prefer /Applications over ~/Applications)
+      const seen = new Set<string>()
+      return allApps.filter(app => {
+        if (seen.has(app.bundleId)) return false
+        seen.add(app.bundleId)
+        return true
       })
     } catch {
       return []
@@ -226,10 +267,13 @@ export const apps: AppsAPI = {
 // ScreenshotAPI
 // ---------------------------------------------------------------------------
 
-async function captureScreenToBase64(args: string[]): Promise<{ base64: string; width: number; height: number }> {
+async function captureScreenToBase64(
+  args: string[],
+): Promise<{ base64: string; width: number; height: number }> {
   const tmpFile = join(tmpdir(), `cu-screenshot-${Date.now()}.png`)
   const proc = Bun.spawn(['screencapture', ...args, tmpFile], {
-    stdout: 'pipe', stderr: 'pipe',
+    stdout: 'pipe',
+    stderr: 'pipe',
   })
   await proc.exited
   try {
@@ -239,20 +283,43 @@ async function captureScreenToBase64(args: string[]): Promise<{ base64: string; 
     const height = buf.readUInt32BE(20)
     return { base64, width, height }
   } finally {
-    try { unlinkSync(tmpFile) } catch {}
+    try {
+      unlinkSync(tmpFile)
+    } catch {}
   }
 }
 
 export const screenshot: ScreenshotAPI = {
-  async captureExcluding(_allowedBundleIds, _quality, _targetW, _targetH, displayId) {
+  async captureExcluding(
+    _allowedBundleIds,
+    _quality,
+    _targetW,
+    _targetH,
+    displayId,
+  ) {
     const args = ['-x']
     if (displayId !== undefined) args.push('-D', String(displayId))
     return captureScreenToBase64(args)
   },
 
-  async captureRegion(_allowedBundleIds, x, y, w, h, _outW, _outH, _quality, displayId) {
+  async captureRegion(
+    _allowedBundleIds,
+    x,
+    y,
+    w,
+    h,
+    _outW,
+    _outH,
+    _quality,
+    displayId,
+  ) {
     const args = ['-x', '-R', `${x},${y},${w},${h}`]
     if (displayId !== undefined) args.push('-D', String(displayId))
     return captureScreenToBase64(args)
+  },
+
+  captureWindowTarget(_titleOrHwnd: string | number): ScreenshotResult | null {
+    // Window capture not supported on macOS via this backend
+    return null
   },
 }

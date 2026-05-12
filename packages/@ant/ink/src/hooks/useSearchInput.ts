@@ -7,7 +7,9 @@
  */
 
 import { useCallback, useState } from 'react'
-import type { KeyboardEvent } from '../core/events/keyboard-event.js'
+import { KeyboardEvent } from '../core/events/keyboard-event.js'
+import type { Key, InputEvent } from '../core/events/input-event.js'
+import type { ParsedKey } from '../core/parse-keypress.js'
 import useInput from './use-input.js'
 import { useTerminalSize } from '../hooks/useTerminalSize.js'
 
@@ -108,7 +110,9 @@ export function useSearchInput({
     if (e.key === 'delete') {
       e.preventDefault()
       if (cursorOffset < query.length) {
-        setQueryState(query.slice(0, cursorOffset) + query.slice(cursorOffset + 1))
+        setQueryState(
+          query.slice(0, cursorOffset) + query.slice(cursorOffset + 1),
+        )
       }
       return
     }
@@ -157,7 +161,9 @@ export function useSearchInput({
             return
           }
           if (cursorOffset < query.length) {
-            setQueryState(query.slice(0, cursorOffset) + query.slice(cursorOffset + 1))
+            setQueryState(
+              query.slice(0, cursorOffset) + query.slice(cursorOffset + 1),
+            )
           }
           return
         }
@@ -205,15 +211,17 @@ export function useSearchInput({
     // Regular character input
     if (e.key.length >= 1 && !UNHANDLED_SPECIAL_KEYS.has(e.key)) {
       e.preventDefault()
-      setQueryState(query.slice(0, cursorOffset) + e.key + query.slice(cursorOffset))
+      setQueryState(
+        query.slice(0, cursorOffset) + e.key + query.slice(cursorOffset),
+      )
       setCursorOffset(cursorOffset + 1)
     }
   }
 
   // Bridge: subscribe via useInput and adapt to KeyboardEvent
   useInput(
-    (_input: string, _key: unknown, event: { keypress: string }) => {
-      handleKeyDown(new KeyboardEvent(event.keypress))
+    (_input: string, _key: Key, event: InputEvent) => {
+      handleKeyDown(new KeyboardEvent(event.keypress as ParsedKey))
     },
     { isActive },
   )

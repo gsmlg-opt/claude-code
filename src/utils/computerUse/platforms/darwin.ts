@@ -27,12 +27,12 @@ import { requireComputerUseSwift } from '../swiftLoader.js'
 const input: InputPlatform = {
   async moveMouse(x, y) {
     const api = requireComputerUseInput()
-    await api.moveMouse(x, y)
+    await api.moveMouse(x, y, false)
   },
 
   async click(x, y, button) {
     const api = requireComputerUseInput()
-    await api.moveMouse(x, y)
+    await api.moveMouse(x, y, false)
     await api.mouseButton(button, 'click', 1)
   },
 
@@ -71,7 +71,13 @@ const input: InputPlatform = {
 const screenshot: ScreenshotPlatform = {
   async captureScreen(displayId) {
     const swift = requireComputerUseSwift()
-    return swift.screenshot.captureExcluding([], undefined, undefined, undefined, displayId)
+    return swift.screenshot.captureExcluding(
+      [],
+      undefined,
+      undefined,
+      undefined,
+      displayId,
+    )
   },
 
   async captureRegion(x, y, w, h) {
@@ -110,7 +116,7 @@ const apps: AppsPlatform = {
     const running = swift.apps.listRunning()
     return running.map((app: any) => ({
       id: app.bundleId ?? '',
-      pid: 0,  // macOS listRunning doesn't expose PID through this API
+      pid: 0, // macOS listRunning doesn't expose PID through this API
       title: app.displayName ?? '',
     }))
   },

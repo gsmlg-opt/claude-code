@@ -1,6 +1,6 @@
 import { readdir, readFile, writeFile, cp } from 'fs/promises'
 import { join } from 'path'
-import { getMacroDefines } from './scripts/defines.ts'
+import { getMacroDefines, DEFAULT_BUILD_FEATURES } from './scripts/defines.ts'
 
 const outdir = 'dist'
 
@@ -8,47 +8,33 @@ const outdir = 'dist'
 const { rmSync } = await import('fs')
 rmSync(outdir, { recursive: true, force: true })
 
-// Default features that match the official CLI build.
-// Additional features can be enabled via FEATURE_<NAME>=1 env vars.
-const DEFAULT_BUILD_FEATURES = [
-  'AGENT_TRIGGERS_REMOTE',
-  'CHICAGO_MCP',
-  'VOICE_MODE',
-  'SHOT_STATS',
-  'PROMPT_CACHE_BREAK_DETECTION',
-  'TOKEN_BUDGET',
-  // P0: local features
-  'AGENT_TRIGGERS',
-  'ULTRATHINK',
-  'BUILTIN_EXPLORE_PLAN_AGENTS',
-  'LODESTONE',
-  // P1: API-dependent features
-  'EXTRACT_MEMORIES',
-  'VERIFICATION_AGENT',
-  'KAIROS_BRIEF',
-  'AWAY_SUMMARY',
-  'ULTRAPLAN',
-]
-
-// Collect FEATURE_* env vars
+// Collect FEATURE_* env vars for the local feature shim.
 const envFeatures = Object.keys(process.env)
   .filter(k => k.startsWith('FEATURE_'))
   .map(k => k.replace('FEATURE_', ''))
 const enabledFeatures = new Set([...DEFAULT_BUILD_FEATURES, ...envFeatures])
 
-// Set feature env vars so src/shims/bun-bundle.ts can read them at bundle-eval time.
-// (These are also embedded into the bundle's process.env reads at runtime.)
-for (const f of enabledFeatures) {
-  process.env[`FEATURE_${f}`] = '1'
+// Standard Bun does not support Anthropic's Bun.build({ features }) extension.
+// Seed FEATURE_* env vars so src/shims/bun-bundle.ts can evaluate gates.
+for (const featureName of enabledFeatures) {
+  process.env[`FEATURE_${featureName}`] ||= '1'
 }
 
-// Step 2: Bundle with splitting
+// Step 2: Bundle as a single file. Standard Bun's splitter can emit invalid
+// chunk export lists for this recovered source tree.
 const result = await Bun.build({
   entrypoints: ['src/entrypoints/cli.tsx'],
   outdir,
   target: 'bun',
-  splitting: true,
-  define: getMacroDefines(),
+  splitting: false,
+  sourcemap: 'linked',
+  define: {
+    ...getMacroDefines(),
+    // React production mode — eliminates _debugStack Error objects
+    // (6,889 objects × ~1.7KB = 12MB in development builds) and removes
+    // prop-type / key warnings not useful in a production CLI tool.
+    'process.env.NODE_ENV': JSON.stringify('production'),
+  },
 })
 
 if (!result.success) {
@@ -78,27 +64,50 @@ for (const file of files) {
   }
 }
 
+// Also patch unguarded globalThis.Bun destructuring from third-party deps
+// (e.g. @anthropic-ai/sandbox-runtime) so Node.js doesn't crash at import time.
+let bunPatched = 0
+const BUN_DESTRUCTURE = /var \{([^}]+)\} = globalThis\.Bun;?/g
+const BUN_DESTRUCTURE_SAFE =
+  'var {$1} = typeof globalThis.Bun !== "undefined" ? globalThis.Bun : {};'
+for (const file of files) {
+  if (!file.endsWith('.js')) continue
+  const filePath = join(outdir, file)
+  const content = await readFile(filePath, 'utf-8')
+  if (BUN_DESTRUCTURE.test(content)) {
+    await writeFile(
+      filePath,
+      content.replace(BUN_DESTRUCTURE, BUN_DESTRUCTURE_SAFE),
+    )
+    bunPatched++
+  }
+}
+BUN_DESTRUCTURE.lastIndex = 0
+
 console.log(
-  `Bundled ${result.outputs.length} files to ${outdir}/ (patched ${patched} for Node.js compat)`,
+  `Bundled ${result.outputs.length} files to ${outdir}/ (patched ${patched} for import.meta.require, ${bunPatched} for Bun destructure)`,
 )
 
-// Step 4: Copy native .node addon files (audio-capture)
-const vendorDir = join(outdir, 'vendor', 'audio-capture')
-await cp('vendor/audio-capture', vendorDir, { recursive: true })
-console.log(`Copied vendor/audio-capture/ → ${vendorDir}/`)
+// Step 4: Copy native .node addon files (audio-capture) and vendored binaries (ripgrep)
+const audioCaptureDir = join(outdir, 'vendor', 'audio-capture')
+await cp('vendor/audio-capture', audioCaptureDir, { recursive: true })
+console.log(`Copied vendor/audio-capture/ → ${audioCaptureDir}/`)
 
-// Step 5: Bundle download-ripgrep script as standalone JS for postinstall
-const rgScript = await Bun.build({
-  entrypoints: ['scripts/download-ripgrep.ts'],
-  outdir,
-  target: 'node',
-})
-if (!rgScript.success) {
-  console.error('Failed to bundle download-ripgrep script:')
-  for (const log of rgScript.logs) {
-    console.error(log)
-  }
-  // Non-fatal — postinstall fallback to bun run scripts/download-ripgrep.ts
-} else {
-  console.log(`Bundled download-ripgrep script to ${outdir}/`)
-}
+const ripgrepDir = join(outdir, 'vendor', 'ripgrep')
+await cp('src/utils/vendor/ripgrep', ripgrepDir, { recursive: true })
+console.log(`Copied src/utils/vendor/ripgrep/ → ${ripgrepDir}/`)
+
+// Step 5: Generate cli-bun and cli-node executable entry points
+const cliBun = join(outdir, 'cli-bun.js')
+const cliNode = join(outdir, 'cli-node.js')
+
+await writeFile(cliBun, '#!/usr/bin/env bun\nimport "./cli.js"\n')
+
+await writeFile(cliNode, '#!/usr/bin/env node\nimport "./cli.js"\n')
+
+// Make both executable
+const { chmodSync } = await import('fs')
+chmodSync(cliBun, 0o755)
+chmodSync(cliNode, 0o755)
+
+console.log(`Generated ${cliBun} (shebang: bun) and ${cliNode} (shebang: node)`)
