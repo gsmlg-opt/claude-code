@@ -70,7 +70,6 @@ import {
   areFileEditsInputsEquivalent,
   findActualString,
   getPatchForEdit,
-  preserveQuoteStyle,
 } from './utils.js'
 
 // V8/Bun string length limit is ~2^30 characters (~1 billion). For typical
@@ -179,14 +178,26 @@ export const FileEditTool = buildTool({
 
     const fs = getFsImplementation()
 
-    // Prevent OOM on multi-GB files.
+    // 预检：防止 OOM（超大文件）+ 防止编辑目录路径
+    // 目录路径预检避免 AI 模型传入目录时触发原始 EISDIR 错误，
+    // 确保模型拿到清晰、可操作的指引消息。
     try {
-      const { size } = await fs.stat(fullFilePath)
-      if (size > MAX_EDIT_FILE_SIZE) {
+      const fileStat = await fs.stat(fullFilePath)
+      // 预检：如果路径已是一个存在的目录，及时拒绝并给出指引
+      // 避免 AI 模型传入目录路径后 Edit 工具读取文件时抛 EISDIR。
+      if (fileStat.isDirectory()) {
         return {
           result: false,
           behavior: 'ask',
-          message: `File is too large to edit (${formatFileSize(size)}). Maximum editable file size is ${formatFileSize(MAX_EDIT_FILE_SIZE)}.`,
+          message: `Cannot edit '${file_path}': the specified path is an existing directory. Use Bash ls to list files in this directory, or specify a filename path to edit a specific file.`,
+          errorCode: 10,
+        }
+      }
+      if (fileStat.size > MAX_EDIT_FILE_SIZE) {
+        return {
+          result: false,
+          behavior: 'ask',
+          message: `File is too large to edit (${formatFileSize(fileStat.size)}). Maximum editable file size is ${formatFileSize(MAX_EDIT_FILE_SIZE)}.`,
           errorCode: 10,
         }
       }
@@ -297,7 +308,7 @@ export const FileEditTool = buildTool({
 
     const file = fileContent
 
-    // Use findActualString to handle quote normalization
+    // Use findActualString to find exact match
     const actualOldString = findActualString(file, old_string)
     if (!actualOldString) {
       return {
@@ -452,23 +463,16 @@ export const FileEditTool = buildTool({
       }
     }
 
-    // 3. Use findActualString to handle quote normalization
+    // 3. Find the exact string in file content
     const actualOldString =
       findActualString(originalFileContents, old_string) || old_string
-
-    // Preserve curly quotes in new_string when the file uses them
-    const actualNewString = preserveQuoteStyle(
-      old_string,
-      actualOldString,
-      new_string,
-    )
 
     // 4. Generate patch
     const { patch, updatedFile } = getPatchForEdit({
       filePath: absoluteFilePath,
       fileContents: originalFileContents,
       oldString: actualOldString,
-      newString: actualNewString,
+      newString: new_string,
       replaceAll: replace_all,
     })
 

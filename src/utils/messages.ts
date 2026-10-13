@@ -753,6 +753,7 @@ export function normalizeMessages(messages: Message[]): NormalizedMessage[] {
   // and remains true for all subsequent messages in the normalization process.
   let isNewChain = false
   return messages.flatMap(message => {
+    if (!message) return []
     switch (message.type) {
       case 'assistant': {
         const aMsg = message as AssistantMessage
@@ -776,7 +777,7 @@ export function normalizeMessages(messages: Message[]): NormalizedMessage[] {
             isVirtual: message.isVirtual,
             requestId: message.requestId,
             uuid,
-            error: message.error,
+            error: message?.error,
             isApiErrorMessage: message.isApiErrorMessage,
             advisorModel: message.advisorModel,
           } as NormalizedAssistantMessage
@@ -1275,8 +1276,11 @@ export function buildMessageLookups(
       }
 
       // Count in-progress hooks
-      const progressData = msg.data as { type: string; hookEvent: HookEvent }
-      if (progressData.type === 'hook_progress') {
+      const progressData = msg.data as
+        | { type: string; hookEvent: HookEvent }
+        | null
+        | undefined
+      if (progressData && progressData.type === 'hook_progress') {
         const hookEvent = progressData.hookEvent
         let byHookEvent = inProgressHookCounts.get(toolUseID)
         if (!byHookEvent) {
@@ -1417,11 +1421,21 @@ export function updateMessageLookupsIncremental(
     return null
   }
 
-  // No new messages — nothing to do
+  // No new messages — nothing to do, UNLESS the trailing message is a
+  // progress tick. REPL.tsx replaces ephemeral progress (Bash/PowerShell/MCP)
+  // in-place to bound the messages array — same length, but the trailing
+  // progress is a fresh tick. Returning `existing` here would leave
+  // progressMessagesByToolUseID stuck on the first tick and elapsed-time
+  // displays (ShellProgressMessage) would freeze. Force a full rebuild so
+  // the fresh tick propagates.
   if (
     normalizedMessages.length === previousNormalizedCount &&
     messages.length === previousMessageCount
   ) {
+    const lastNormalized = normalizedMessages[normalizedMessages.length - 1]
+    if (lastNormalized && lastNormalized.type === 'progress') {
+      return null
+    }
     return existing
   }
 
@@ -1605,7 +1619,13 @@ export function computeMessageStructureKey(
   }
   for (const msg of normalizedMessages) {
     if (msg.type === 'progress') {
-      parts.push('p', (msg as ProgressMessage).parentToolUseID as string)
+      const pMsg = msg as ProgressMessage
+      // Include uuid so ephemeral progress tick replacements
+      // (Bash/PowerShell/MCP) invalidate the lookups cache. Without this,
+      // REPL.tsx's in-place tick replacement (same parentToolUseID, same
+      // length) yields an identical key, lookups cache the first tick
+      // forever, and ShellProgressMessage's elapsed time freezes.
+      parts.push('p', pMsg.parentToolUseID as string, pMsg.uuid)
     }
   }
   return parts.join(',')
@@ -2360,6 +2380,7 @@ export function normalizeMessagesForAPI(
       },
     )
     .forEach(message => {
+      if (!message) return []
       switch (message.type) {
         case 'system': {
           // local_command system messages need to be included as user messages
@@ -2541,21 +2562,26 @@ export function normalizeMessagesForAPI(
           }
 
           // Find a previous assistant message with the same message ID and merge.
-          // Walk backwards, skipping tool results and different-ID assistants,
-          // since concurrent agents (teammates) can interleave streaming content
-          // blocks from multiple API responses with different message IDs.
+          // Walk backwards, skipping different-ID assistants, since concurrent
+          // agents (teammates) can interleave streaming content blocks from
+          // multiple API responses with different message IDs.
+          //
+          // Do NOT skip tool_result messages — when claude.ts yields separate
+          // AssistantMessages for thinking and tool_use blocks (same message.id),
+          // a StreamingToolExecutor tool_result can land between them. Merging
+          // across that boundary produces duplicate tool_use IDs that downstream
+          // ensureToolResultPairing strips, leaving orphaned tool_results and
+          // ultimately consecutive user messages → API 400 (CC-1215).
           for (let i = result.length - 1; i >= 0; i--) {
             const msg = result[i]!
 
-            if (msg.type !== 'assistant' && !isToolResultMessage(msg)) {
+            if (msg.type !== 'assistant') {
               break
             }
 
-            if (msg.type === 'assistant') {
-              if (msg.message.id === normalizedMessage.message.id) {
-                result[i] = mergeAssistantMessages(msg, normalizedMessage)
-                return
-              }
+            if (msg.message.id === normalizedMessage.message.id) {
+              result[i] = mergeAssistantMessages(msg, normalizedMessage)
+              return
             }
           }
 
@@ -3586,7 +3612,7 @@ function getPlanModeV2Instructions(attachment: {
   const agentCount = getPlanModeV2AgentCount()
   const exploreAgentCount = getPlanModeV2ExploreAgentCount()
   const planFileInfo = attachment.planExists
-    ? `A plan file already exists at ${attachment.planFilePath}. You can read it and make incremental edits using the ${FileEditTool.name} tool.`
+    ? `A plan file already exists at ${attachment.planFilePath}. You MUST use ${FileReadTool.name} to read it first before making any changes. Make incremental edits using the ${FileEditTool.name} tool — do NOT overwrite the entire file unless the user explicitly asks for a complete rewrite.`
     : `No plan file exists yet. You should create your plan at ${attachment.planFilePath} using the ${FileWriteTool.name} tool.`
 
   const content = `Plan mode is active. The user indicated that they do not want you to execute yet -- you MUST NOT make any edits (with the exception of the plan file mentioned below), run any non-readonly tools (including changing configs or making commits), or otherwise make any changes to the system. This supercedes any other instructions you have received.
@@ -3603,10 +3629,10 @@ Goal: Gain a comprehensive understanding of the user's request by reading throug
 1. Focus on understanding the user's request and the code associated with their request. Actively search for existing functions, utilities, and patterns that can be reused — avoid proposing new code when suitable implementations already exist.
 
 2. **Launch up to ${exploreAgentCount} ${EXPLORE_AGENT.agentType} agents IN PARALLEL** (single message, multiple tool calls) to efficiently explore the codebase.
-   - Use 1 agent when the task is isolated to known files, the user provided specific file paths, or you're making a small targeted change.
+   - For tasks with well-known file targets, 1 agent may suffice. In most cases, prefer launching 2-3 agents with complementary search focuses to maximize coverage.
    - Use multiple agents when: the scope is uncertain, multiple areas of the codebase are involved, or you need to understand existing patterns before planning.
-   - Quality over quantity - ${exploreAgentCount} agents maximum, but you should try to use the minimum number of agents necessary (usually just 1)
-   - If using multiple agents: Provide each agent with a specific search focus or area to explore. Example: One agent searches for existing implementations, another explores related components, a third investigating testing patterns
+   - Quality over quantity - ${exploreAgentCount} agents maximum. Do NOT skip exploration — always use at least 1 Explore agent in Phase 1.
+   - When using multiple agents: Provide each agent with a specific search focus or area to explore. Example: One agent searches for existing implementations, another explores related components, a third investigates testing patterns
 
 ### Phase 2: Design
 Goal: Design an implementation approach.
@@ -3690,7 +3716,7 @@ function getPlanModeInterviewInstructions(attachment: {
   planExists?: boolean
 }): UserMessage[] {
   const planFileInfo = attachment.planExists
-    ? `A plan file already exists at ${attachment.planFilePath}. You can read it and make incremental edits using the ${FileEditTool.name} tool.`
+    ? `A plan file already exists at ${attachment.planFilePath}. You MUST use ${FileReadTool.name} to read it first before making any changes. Make incremental edits using the ${FileEditTool.name} tool — do NOT overwrite the entire file unless the user explicitly asks for a complete rewrite.`
     : `No plan file exists yet. You should create your plan at ${attachment.planFilePath} using the ${FileWriteTool.name} tool.`
 
   const content = `Plan mode is active. The user indicated that they do not want you to execute yet -- you MUST NOT make any edits (with the exception of the plan file mentioned below), run any non-readonly tools (including changing configs or making commits), or otherwise make any changes to the system. This supercedes any other instructions you have received.
@@ -3752,7 +3778,7 @@ function getPlanModeV2SparseInstructions(attachment: {
 }): UserMessage[] {
   const workflowDescription = isPlanModeInterviewPhaseEnabled()
     ? 'Follow iterative workflow: explore codebase, interview user, write to plan incrementally.'
-    : 'Follow 5-phase workflow.'
+    : `Follow 5-phase workflow. Phase 1: use ${EXPLORE_AGENT.agentType} agents for code exploration.`
 
   const content = `Plan mode still active (see full instructions earlier in conversation). Read-only except plan file (${attachment.planFilePath}). ${workflowDescription} End turns with ${ASK_USER_QUESTION_TOOL_NAME} (for clarifications) or ${ExitPlanModeV2Tool.name} (for plan approval). Never ask about plan approval via text or AskUserQuestion.`
 
@@ -4593,7 +4619,7 @@ You have exited auto mode. The user may now want to interact more directly. You 
       const parts: string[] = []
       if (attachment.addedLines.length > 0) {
         parts.push(
-          `The following deferred tools are now available via SearchExtraTools:\n${attachment.addedLines.join('\n')}`,
+          `The following deferred tools are now available:\n${attachment.addedLines.join('\n')}\n\nTo use these tools, call SearchExtraTools then ExecuteExtraTool — both are core tools already in your tool list. Call them directly, do NOT use Bash/Glob to find them.`,
         )
       }
       if (attachment.removedNames.length > 0) {
@@ -5829,11 +5855,15 @@ export function ensureToolResultPairing(
         )
       } else {
         // Content is empty after stripping orphaned tool_results. We still
-        // need a user message here to maintain role alternation — otherwise
-        // the assistant placeholder we just pushed would be immediately
-        // followed by the NEXT assistant message, which the API rejects with
-        // a role-alternation 400 (not the duplicate-id 400 we handle).
+        // need a user message here to maintain role alternation — unless the
+        // previous result entry is already a user message, in which case
+        // inserting another user placeholder creates consecutive-user messages
+        // that Anthropic rejects with a misleading "tool_use without
+        // tool_result" 400 (CC-1215).
         i++
+        if (result.at(-1)?.type === 'user') {
+          continue
+        }
         result.push(
           createUserMessage({
             content: NO_CONTENT_MESSAGE,

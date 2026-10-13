@@ -23,6 +23,7 @@ import { getDefaultCharacters, type SpinnerMode } from './Spinner/index.js';
 import { SpinnerAnimationRow } from './Spinner/SpinnerAnimationRow.js';
 import { useSettings } from '../hooks/useSettings.js';
 import { isInProcessTeammateTask } from '../tasks/InProcessTeammateTask/types.js';
+import { isLocalAgentTask } from '../tasks/LocalAgentTask/LocalAgentTask.js';
 import { isBackgroundTask } from '../tasks/types.js';
 import { getAllInProcessTeammateTasks } from '../tasks/InProcessTeammateTask/InProcessTeammateTask.js';
 import { getEffortSuffix } from '../utils/effort.js';
@@ -62,6 +63,8 @@ type Props = {
   overrideMessage?: string | null;
   spinnerSuffix?: string | null;
   verbose: boolean;
+  /** True while a compaction summary is streaming — shows a token progress bar. */
+  compactProgressActiveRef?: React.RefObject<boolean>;
   hasActiveTools?: boolean;
   /** Leader's turn has completed (no active query). Used to suppress stall-red spinner when only teammates are running. */
   leaderIsIdle?: boolean;
@@ -109,6 +112,7 @@ function SpinnerWithVerbInner({
   overrideMessage,
   spinnerSuffix,
   verbose,
+  compactProgressActiveRef,
   hasActiveTools = false,
   leaderIsIdle = false,
 }: Props): React.ReactNode {
@@ -209,15 +213,22 @@ function SpinnerWithVerbInner({
   const hasRunningTeammates = runningTeammates.length > 0;
   const allIdle = hasRunningTeammates && runningTeammates.every(t => t.isIdle);
 
-  // Gather aggregate token stats from all running swarm teammates
-  // In spinner-tree mode, skip aggregation (teammates have their own lines in the tree)
+  // Gather aggregate token stats from all running agents.
+  // In spinner-tree mode, skip in-process teammates (they have their own
+  // per-teammate lines in the tree) but still count local-agent tasks
+  // (background agents) which have no dedicated tree rows.
   let teammateTokens = 0;
-  if (!showSpinnerTree) {
-    for (const task of Object.values(tasks)) {
-      if (isInProcessTeammateTask(task) && task.status === 'running') {
-        if (task.progress?.tokenCount) {
-          teammateTokens += task.progress.tokenCount;
-        }
+  for (const task of Object.values(tasks)) {
+    if (task.status !== 'running') continue;
+    if (isInProcessTeammateTask(task)) {
+      if (!showSpinnerTree && task.progress?.tokenCount) {
+        teammateTokens += task.progress.tokenCount;
+      }
+      continue;
+    }
+    if (isLocalAgentTask(task)) {
+      if (task.progress?.tokenCount) {
+        teammateTokens += task.progress.tokenCount;
       }
     }
   }
@@ -344,6 +355,7 @@ function SpinnerWithVerbInner({
         spinnerSuffix={spinnerSuffix}
         verbose={verbose}
         columns={columns}
+        compactProgressActiveRef={compactProgressActiveRef}
         hasRunningTeammates={hasRunningTeammates}
         teammateTokens={teammateTokens}
         foregroundedTeammate={foregroundedTeammate}

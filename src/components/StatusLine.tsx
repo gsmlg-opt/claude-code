@@ -45,6 +45,7 @@ import { isVimModeEnabled } from './PromptInput/utils.js';
 import { computeHitRate, tokenSignature } from '../utils/cacheStats.js';
 import { onResponse as cacheOnResponse, getCacheStatsState, initCacheStatsState } from '../utils/cacheStatsState.js';
 import { BuiltinStatusLine } from './BuiltinStatusLine.js';
+import { formatTokens } from 'src/utils/format.js';
 
 // ---------------------------------------------------------------------------
 // CachePill — cache hit-rate + 1-hour TTL countdown pill
@@ -156,6 +157,51 @@ function CachePill({ messages }: CachePillProps): React.ReactNode {
   );
 }
 
+function GoalPill(): React.ReactNode {
+  if (!feature('GOAL')) return null;
+  const { getGoal, formatGoalStatusLabel } =
+    require('../services/goal/goalState.js') as typeof import('../services/goal/goalState.js');
+  const goal = getGoal();
+  if (!goal) return null;
+
+  const truncatedObj = goal.objective.length > 30 ? `${goal.objective.slice(0, 27)}…` : goal.objective;
+  const budget =
+    goal.tokenBudget !== null
+      ? `${formatTokens(goal.tokensUsed)}/${formatTokens(goal.tokenBudget)}`
+      : formatTokens(goal.tokensUsed);
+  const statusLabel = formatGoalStatusLabel(goal.status);
+
+  let statusNode: React.ReactNode;
+  switch (goal.status) {
+    case 'active':
+      statusNode = <Text color="ansi:green">{statusLabel}</Text>;
+      break;
+    case 'paused':
+    case 'budget_limited':
+    case 'usage_limited':
+      statusNode = <Text color="ansi:yellow">{statusLabel}</Text>;
+      break;
+    case 'blocked':
+      statusNode = <Text color="ansi:red">{statusLabel}</Text>;
+      break;
+    case 'complete':
+      statusNode = <Text color="ansi:cyan">{statusLabel}</Text>;
+      break;
+    default:
+      statusNode = <Text>{statusLabel}</Text>;
+  }
+
+  return (
+    <Text>
+      {statusNode}
+      <Text dimColor>{' · '}</Text>
+      <Text dimColor>{truncatedObj}</Text>
+      <Text dimColor>{' · '}</Text>
+      <Text>{budget}</Text>
+    </Text>
+  );
+}
+
 export function statusLineShouldDisplay(settings: ReadonlySettings): boolean {
   // Assistant mode: statusline fields (model, permission mode, cwd) reflect the
   // REPL/daemon process, not what the agent child is actually running. Hide it.
@@ -192,7 +238,7 @@ function buildStatusLineCommandInput(
   const sessionId = getSessionId();
   const sessionName = getCurrentSessionTitle(sessionId);
   const rawUtil = getRawUtilization();
-  const rateLimits: StatusLineCommandInput['rate_limits'] = {
+  const rateLimits: NonNullable<StatusLineCommandInput['rate_limits']> = {
     ...(rawUtil.five_hour && {
       five_hour: {
         used_percentage: rawUtil.five_hour.utilization * 100,
@@ -519,6 +565,7 @@ function StatusLineInner({ messagesRef, lastAssistantMessageId, vimMode }: Props
             totalCostUsd={getTotalCost()}
             rateLimits={builtinRateLimits}
           />
+          <GoalPill />
           <CachePill messages={messagesRef.current} />
         </Box>
       )}
